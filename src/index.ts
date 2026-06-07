@@ -12,6 +12,26 @@ app.get('/health', (_req: Request, res: Response) => {
   res.json({ ok: true, service: 'alice-sales-engine' });
 });
 
+// ── Diagnostica rete verso Recall EU (rimuovere dopo debug) ──
+app.get('/ping-recall', async (_req: Request, res: Response) => {
+  const region = process.env.RECALL_REGION || 'eu';
+  const url = region === 'eu'
+    ? 'https://api.eu.recall.ai/api/v1/bot/'
+    : 'https://api.recall.ai/api/v1/bot/';
+  try {
+    const r = await fetch(url, {
+      method: 'GET',
+      headers: { Authorization: `Token ${process.env.RECALL_API_KEY}` },
+    });
+    const body = await r.json().catch(() => ({}));
+    res.json({ ok: true, status: r.status, url, body });
+  } catch (e: unknown) {
+    const msg   = e instanceof Error ? e.message : String(e);
+    const cause = e instanceof Error ? String((e as { cause?: unknown }).cause ?? '') : '';
+    res.json({ ok: false, error: msg, cause, url });
+  }
+});
+
 // ── POST /join ────────────────────────────────────────────
 // Body: { meeting_url: string, closer_id?: string }
 // Crea un bot Recall e inserisce una riga in chiamate
