@@ -58,7 +58,8 @@ app.post('/join', async (req: Request, res: Response) => {
 
 // ── POST /webhook ─────────────────────────────────────────
 // Riceve eventi da Recall (bot.status_change, recording.done, …)
-app.post('/webhook', handleWebhook);
+// express.raw() preserva il body grezzo necessario per la verifica firma Svix
+app.post('/webhook', express.raw({ type: 'application/json' }), handleWebhook);
 
 // ── Start ─────────────────────────────────────────────────
 const PORT = Number(process.env.PORT) || 3001;
