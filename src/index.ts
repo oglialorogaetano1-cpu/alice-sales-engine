@@ -66,5 +66,5 @@ app.post('/join', async (req: Request, res: Response) => {
 // ── Start ─────────────────────────────────────────────────
 const PORT = Number(process.env.PORT) || 3001;
 app.listen(PORT, () => {
-  console.log(`alice-sales-engine listening on :${PORT}`);
+  console.log(`alice-sales-engine v2A listening on :${PORT}`);
 });
