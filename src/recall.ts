@@ -1,6 +1,6 @@
 const REGION = process.env.RECALL_REGION || 'eu';
 const BASE = REGION === 'eu'
-  ? 'https://api.eu.recall.ai/api/v1'
+  ? 'https://eu-central-1.recall.ai/api/v1'
   : 'https://api.recall.ai/api/v1';
 
 function headers() {
@@ -27,8 +27,6 @@ export async function createBot(meetingUrl: string): Promise<RecallBot> {
       body: JSON.stringify({
         meeting_url: meetingUrl,
         bot_name: 'Alice Sales Bot',
-        recording_mode: 'speaker_view',
-        real_time_transcription: { destination_url: null },
       }),
     });
   } catch (e: unknown) {

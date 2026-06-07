@@ -34,11 +34,21 @@ function verifySignature(
   const keyBytes = Buffer.from(secret.replace(/^whsec_/, ''), 'base64');
 
   // Stringa firmata: id.timestamp.rawBody
-  const toSign   = `${msgId}.${msgTimestamp}.${rawBody.toString()}`;
-  const computed = 'v1,' + crypto.createHmac('sha256', keyBytes).update(toSign).digest('base64');
+  const toSign      = `${msgId}.${msgTimestamp}.${rawBody.toString('utf8')}`;
+  const expectedB64 = crypto.createHmac('sha256', keyBytes).update(toSign).digest('base64');
+  const expectedBuf = Buffer.from(expectedB64, 'base64');
 
   // webhook-signature può contenere più firme separate da spazio (rotazione chiavi)
-  return msgSignature.split(' ').some(sig => sig === computed);
+  // Confronto timing-safe come raccomandato dalla doc Recall/Svix
+  for (const versionedSig of msgSignature.split(' ')) {
+    const [version, signature] = versionedSig.split(',');
+    if (version !== 'v1' || !signature) continue;
+    const sigBuf = Buffer.from(signature, 'base64');
+    if (sigBuf.length === expectedBuf.length && crypto.timingSafeEqual(sigBuf, expectedBuf)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 type RecallEvent = {
