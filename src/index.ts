@@ -63,47 +63,6 @@ app.post('/join', async (req: Request, res: Response) => {
   res.json({ ok: true, bot_id: bot.id, chiamata_id: chiamata.id });
 });
 
-// ── POST /test-telegram ───────────────────────────────────
-// Invia una notifica di test senza bisogno di una call reale.
-// Body opzionale: { chat_id?: string } — se omesso usa MANAGER_TELEGRAM_CHAT_ID
-app.post('/test-telegram', async (req: Request, res: Response) => {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
-  if (!token) {
-    res.status(500).json({ ok: false, error: 'TELEGRAM_BOT_TOKEN non impostato' });
-    return;
-  }
-
-  const chatId = (req.body as { chat_id?: string }).chat_id
-    ?? process.env.MANAGER_TELEGRAM_CHAT_ID;
-
-  if (!chatId) {
-    res.status(400).json({ ok: false, error: 'chat_id mancante e MANAGER_TELEGRAM_CHAT_ID non impostato' });
-    return;
-  }
-
-  const text = [
-    '🧪 <b>Alert di test — Alice Sales Engine</b>',
-    '',
-    'Se ricevi questo messaggio, il bot funziona correttamente.',
-    `<i>chat_id: ${chatId}</i>`,
-  ].join('\n');
-
-  const tgRes = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML' }),
-  });
-
-  const tgBody = await tgRes.json() as { ok: boolean; description?: string };
-
-  if (!tgRes.ok || !tgBody.ok) {
-    res.status(502).json({ ok: false, telegram_error: tgBody.description ?? 'unknown' });
-    return;
-  }
-
-  res.json({ ok: true, sent_to: chatId });
-});
-
 // ── Start ─────────────────────────────────────────────────
 const PORT = Number(process.env.PORT) || 3001;
 app.listen(PORT, () => {
