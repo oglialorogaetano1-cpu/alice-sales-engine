@@ -171,7 +171,7 @@ export function handleCalendarWebhook(req: Request, res: Response): void {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            bot_name: 'Alice AI',
+            bot_config: { bot_name: 'Alice AI' },
             deduplication_key: `${ev.id}-${closerId}`,
             metadata: { closer_id: closerId },
           }),
