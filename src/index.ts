@@ -7,11 +7,12 @@ import { handleCalendarConnect, handleCalendarCallback, handleCalendarWebhook } 
 
 const app = express();
 
-// ── POST /webhook — PRIMA di express.json() ───────────────
+// ── Webhook endpoints — PRIMA di express.json() ───────────
 // express.raw() deve girare su body non ancora parsato.
 // Se express.json() globale girasse prima, consumerebbe lo stream
 // e rawBody risulterebbe un oggetto JS, invalidando la firma HMAC.
-app.post('/webhook', express.raw({ type: 'application/json' }), handleWebhook);
+app.post('/webhook',          express.raw({ type: 'application/json' }), handleWebhook);
+app.post('/calendar/webhook', express.raw({ type: 'application/json' }), handleCalendarWebhook);
 
 // Da qui in poi il body viene parsato come JSON per tutte le altre route
 app.use(express.json());
@@ -24,9 +25,6 @@ app.get('/health', (_req: Request, res: Response) => {
 // ── Calendar OAuth ────────────────────────────────────────
 app.get('/calendar/connect/:closer_id', handleCalendarConnect);
 app.get('/calendar/callback', handleCalendarCallback);
-
-// ── Calendar events webhook (no Svix, plain JSON) ─────────
-app.post('/calendar/webhook', handleCalendarWebhook);
 
 // ── POST /join ────────────────────────────────────────────
 // Body: { meeting_url: string, closer_id?: string }

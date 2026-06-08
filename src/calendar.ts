@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { adminClient } from './supabase';
+import { verifySignature } from './verify';
 
 const GOOGLE_AUTH_URL  = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
@@ -110,9 +111,27 @@ export async function handleCalendarCallback(req: Request, res: Response): Promi
 }
 
 export function handleCalendarWebhook(req: Request, res: Response): void {
+  const rawBody = req.body as Buffer;
+
+  const hasSvix = !!(req.headers['webhook-id'] ?? req.headers['svix-id']);
+  if (!hasSvix) console.warn('[calendar-wh] nessun header Svix ricevuto');
+
+  if (!verifySignature(req.headers as Record<string, string | string[] | undefined>, rawBody)) {
+    console.warn('[calendar-wh] firma non valida — 401');
+    res.status(401).json({ ok: false, error: 'Invalid signature' });
+    return;
+  }
+
+  let body: { event?: string; data?: { calendar_id?: string } };
+  try {
+    body = JSON.parse(rawBody.toString()) as typeof body;
+  } catch {
+    res.status(400).json({ ok: false, error: 'Body non valido' });
+    return;
+  }
+
   res.json({ ok: true });
 
-  const body = req.body as { event?: string; data?: { calendar_id?: string } };
   if (body?.event !== 'calendar.sync_events') return;
   const calendarId = body?.data?.calendar_id;
   if (!calendarId) return;
