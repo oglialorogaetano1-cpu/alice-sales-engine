@@ -1,6 +1,9 @@
 import crypto from 'crypto';
 import { Request, Response } from 'express';
 import { adminClient } from './supabase';
+import { createTranscript, getTranscriptContent } from './recall';
+import { analyzeCall } from './analyze';
+import { notifyCloser, notifyManager } from './telegram';
 
 const TOLERANCE_SEC = 300; // 5 minuti, stessa soglia dell'SDK Svix
 
@@ -54,9 +57,12 @@ function verifySignature(
 type RecallEvent = {
   event: string;
   data: {
-    bot_id?: string;
+    data?: { code: string; sub_code?: string | null };
+    bot?: { id: string; metadata?: Record<string, string> };
+    recording?: { id: string };
+    transcript?: { id: string };
     status?: { code: string; message?: string };
-    recording?: { id: string; media_shortcuts?: Record<string, { url: string; expires_at: string }> };
+    bot_id?: string;
   };
 };
 
@@ -83,12 +89,31 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
   const adm = adminClient();
 
   if (event === 'bot.status_change') {
-    const code = data.status?.code ?? '';
+    const code  = data.status?.code ?? '';
+    const botId = data.bot?.id ?? data.bot_id;
+    const meta  = data.bot?.metadata;
+
+    // Calendar-initiated bot: create chiamata if it doesn't exist yet
+    if ((code === 'joining_call' || code === 'in_call_not_recording') && meta?.closer_id && botId) {
+      const { data: existing } = await adm
+        .from('chiamate').select('id').eq('recall_bot_id', botId).maybeSingle();
+      if (!existing) {
+        const { error: insErr } = await adm.from('chiamate').insert({
+          recall_bot_id: botId,
+          closer_id:     meta.closer_id,
+          data:          new Date().toISOString().slice(0, 10),
+          stato_pipeline: 'in_attesa',
+        });
+        if (insErr) console.error('[webhook] insert calendar chiamata:', insErr.message);
+        else console.log(`[webhook] calendar-bot chiamata creata bot=${botId} closer=${meta.closer_id}`);
+      }
+    }
+
     if (code === 'fatal' || code === 'recording_permission_denied') {
       const { error } = await adm
         .from('chiamate')
         .update({ stato_pipeline: 'errore', errore_msg: `bot.status: ${code}` })
-        .eq('recall_bot_id', data.bot_id);
+        .eq('recall_bot_id', botId);
       if (error) console.error('[webhook] update errore:', error.message);
     }
     res.json({ ok: true, handled: 'status_change', code });
@@ -96,7 +121,8 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
   }
 
   if (event === 'recording.done') {
-    const botId = data.bot_id;
+    const botId = data.bot?.id ?? data.bot_id;
+    const recordingId = data.recording?.id;
     if (!botId) { res.status(400).json({ ok: false, error: 'bot_id mancante' }); return; }
 
     const { error } = await adm
@@ -111,8 +137,90 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
       return;
     }
 
+    if (recordingId) {
+      try {
+        await createTranscript(recordingId);
+        console.log(`[webhook] createTranscript avviata per recording ${recordingId}`);
+      } catch (e) {
+        console.error('[webhook] createTranscript failed (non-fatal):', e);
+      }
+    }
+
     console.log(`[webhook] chiamata ${botId} → registrata`);
     res.json({ ok: true, handled: 'recording.done', bot_id: botId });
+    return;
+  }
+
+  if (event === 'transcript.done') {
+    const botId = data.bot?.id ?? data.bot_id;
+    const transcriptId = data.transcript?.id;
+
+    if (!botId || !transcriptId) {
+      res.status(400).json({ ok: false, error: 'bot_id o transcript_id mancanti' });
+      return;
+    }
+
+    res.json({ ok: true, handled: 'transcript.done', bot_id: botId });
+
+    (async () => {
+      try {
+        const segments = await getTranscriptContent(transcriptId);
+        const transcriptText = segments
+          .map(seg => `[${seg.participant.name}]: ${seg.words.map(w => w.text).join(' ')}`)
+          .join('\n');
+
+        await adm.from('chiamate')
+          .update({ transcript: transcriptText, stato_pipeline: 'trascritta' })
+          .eq('recall_bot_id', botId);
+
+        const { data: contesto } = await adm
+          .from('contesto_aziendale')
+          .select('descrizione_azienda, pacchetti, cliente_tipo')
+          .single();
+
+        const contestoText = [
+          contesto?.descrizione_azienda ? `Descrizione azienda: ${contesto.descrizione_azienda}` : '',
+          contesto?.cliente_tipo ? `Tipo cliente target: ${contesto.cliente_tipo}` : '',
+          contesto?.pacchetti ? `Pacchetti disponibili: ${JSON.stringify(contesto.pacchetti, null, 2)}` : '',
+        ].filter(Boolean).join('\n');
+
+        const analisi = await analyzeCall(transcriptText, contestoText);
+
+        await adm.from('chiamate')
+          .update({
+            analisi_json: analisi,
+            voto_totale: analisi.voto_totale,
+            stato_trattativa: analisi.stato_trattativa,
+            stato_pipeline: 'analizzata',
+          })
+          .eq('recall_bot_id', botId);
+
+        console.log(`[webhook] chiamata ${botId} → analizzata (voto: ${analisi.voto_totale})`);
+
+        const { data: chiamataRow } = await adm
+          .from('chiamate')
+          .select('closer_id, closers(nome, telegram_chat_id)')
+          .eq('recall_bot_id', botId)
+          .single();
+
+        type CloserRow = { nome: string; telegram_chat_id: string | null };
+        const closer = chiamataRow?.closers as unknown as CloserRow | null;
+
+        if (closer?.telegram_chat_id) {
+          await notifyCloser(closer.telegram_chat_id, analisi);
+        }
+        if (analisi.voto_totale <= 5 || analisi.stato_trattativa === 'a_rischio') {
+          await notifyManager(analisi, closer?.nome ?? 'Sconosciuto');
+        }
+      } catch (e) {
+        const errMsg = e instanceof Error ? e.message : String(e);
+        console.error(`[webhook] pipeline errore bot=${botId}:`, errMsg);
+        await adm.from('chiamate')
+          .update({ stato_pipeline: 'errore', errore_msg: errMsg })
+          .eq('recall_bot_id', botId);
+      }
+    })();
+
     return;
   }
 

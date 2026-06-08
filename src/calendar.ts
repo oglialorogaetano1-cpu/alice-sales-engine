@@ -6,6 +6,13 @@ const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const RECALL_BASE      = 'https://eu-central-1.recall.ai/api/v2';
 const REDIRECT_URI     = 'https://alice-sales-engine-production.up.railway.app/calendar/callback';
 const PLATFORM_URL     = 'https://auto-broker.it/closer/dashboard';
+const CALENDAR_WEBHOOK = 'https://alice-sales-engine-production.up.railway.app/calendar/webhook';
+
+type CalendarEvent = {
+  id: string;
+  start_time: string;
+  meeting_url?: string | null;
+};
 
 const SCOPES = [
   'https://www.googleapis.com/auth/calendar.events.readonly',
@@ -81,7 +88,7 @@ export async function handleCalendarCallback(req: Request, res: Response): Promi
         oauth_client_id:     process.env.GOOGLE_CLIENT_ID,
         oauth_client_secret: process.env.GOOGLE_CLIENT_SECRET,
         oauth_refresh_token: tokens.refresh_token,
-        webhook_url:         'https://alice-sales-engine-production.up.railway.app/webhook',
+        webhook_url:         CALENDAR_WEBHOOK,
       }),
     });
     if (!calRes.ok) throw new Error(`Recall: ${await calRes.text()}`);
@@ -100,4 +107,68 @@ export async function handleCalendarCallback(req: Request, res: Response): Promi
     console.error('[calendar] errore:', e instanceof Error ? e.message : e);
     res.redirect(`${PLATFORM_URL}?calendar=error&reason=internal`);
   }
+}
+
+export function handleCalendarWebhook(req: Request, res: Response): void {
+  res.json({ ok: true });
+
+  const body = req.body as { event?: string; data?: { calendar_id?: string } };
+  if (body?.event !== 'calendar.sync_events') return;
+  const calendarId = body?.data?.calendar_id;
+  if (!calendarId) return;
+
+  (async () => {
+    try {
+      const adm = adminClient();
+      const { data: closerRow } = await adm
+        .from('closers')
+        .select('id')
+        .eq('recall_calendar_id', calendarId)
+        .single();
+
+      if (!closerRow) {
+        console.warn(`[calendar-wh] no closer for calendar_id=${calendarId}`);
+        return;
+      }
+      const closerId = closerRow.id as string;
+
+      const now = new Date().toISOString();
+      const evRes = await fetch(
+        `${RECALL_BASE}/calendar-events/?calendar_id=${calendarId}&start_time__gte=${encodeURIComponent(now)}`,
+        { headers: { Authorization: `Token ${process.env.RECALL_API_KEY}` } },
+      );
+      if (!evRes.ok) {
+        console.error('[calendar-wh] fetch events failed:', await evRes.text()); return;
+      }
+      const { results } = await evRes.json() as { results: CalendarEvent[] };
+
+      for (const ev of (results ?? [])) {
+        if (!ev.meeting_url) continue;
+
+        const botRes = await fetch(`${RECALL_BASE}/calendar-events/${ev.id}/bot/`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Token ${process.env.RECALL_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            bot_name: 'Alice AI',
+            deduplication_key: `${ev.id}-${closerId}`,
+            metadata: { closer_id: closerId },
+          }),
+        });
+
+        if (botRes.ok) {
+          console.log(`[calendar-wh] bot schedulato ev=${ev.id} closer=${closerId}`);
+        } else {
+          const txt = await botRes.text();
+          if (!txt.includes('deduplication_key')) {
+            console.error(`[calendar-wh] schedule bot ev=${ev.id}:`, txt);
+          }
+        }
+      }
+    } catch (e) {
+      console.error('[calendar-wh]', e instanceof Error ? e.message : e);
+    }
+  })();
 }

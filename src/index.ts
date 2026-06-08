@@ -3,7 +3,7 @@ import express, { Request, Response } from 'express';
 import { createBot } from './recall';
 import { adminClient } from './supabase';
 import { handleWebhook } from './webhook';
-import { handleCalendarConnect, handleCalendarCallback } from './calendar';
+import { handleCalendarConnect, handleCalendarCallback, handleCalendarWebhook } from './calendar';
 
 const app = express();
 
@@ -24,6 +24,9 @@ app.get('/health', (_req: Request, res: Response) => {
 // ── Calendar OAuth ────────────────────────────────────────
 app.get('/calendar/connect/:closer_id', handleCalendarConnect);
 app.get('/calendar/callback', handleCalendarCallback);
+
+// ── Calendar events webhook (no Svix, plain JSON) ─────────
+app.post('/calendar/webhook', handleCalendarWebhook);
 
 // ── POST /join ────────────────────────────────────────────
 // Body: { meeting_url: string, closer_id?: string }
