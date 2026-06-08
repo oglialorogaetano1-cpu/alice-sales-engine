@@ -16,7 +16,7 @@ type CalendarEvent = {
 };
 
 const SCOPES = [
-  'https://www.googleapis.com/auth/calendar.events.readonly',
+  'https://www.googleapis.com/auth/calendar.events',
   'https://www.googleapis.com/auth/userinfo.email',
 ].join(' ');
 
@@ -96,8 +96,9 @@ export async function handleCalendarCallback(req: Request, res: Response): Promi
     const { id: recall_calendar_id } = await calRes.json() as { id: string };
 
     await adminClient().from('closers').update({
-      calendar_connesso:  true,
+      calendar_connesso:    true,
       recall_calendar_id,
+      google_refresh_token: tokens.refresh_token,
       ...(email ? { email_google: email } : {}),
     }).eq('id', closer_id);
 
