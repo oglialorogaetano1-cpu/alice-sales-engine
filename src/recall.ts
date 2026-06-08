@@ -48,3 +48,27 @@ export async function getBot(botId: string): Promise<RecallBot> {
   if (!res.ok) throw new Error(`Recall getBot ${res.status}`);
   return res.json() as Promise<RecallBot>;
 }
+
+export async function createTranscript(recordingId: string): Promise<{ id: string }> {
+  const res = await fetch(`${BASE}/recording/${recordingId}/create_transcript/`, {
+    method: 'POST',
+    headers: headers(),
+    body: JSON.stringify({ provider: { recallai_async: { language_code: 'auto' } } }),
+  });
+  if (!res.ok) throw new Error(`createTranscript ${res.status}: ${await res.text()}`);
+  return res.json() as Promise<{ id: string }>;
+}
+
+type TranscriptSegment = {
+  participant: { name: string; is_host: boolean };
+  words: { text: string }[];
+};
+
+export async function getTranscriptContent(transcriptId: string): Promise<TranscriptSegment[]> {
+  const metaRes = await fetch(`${BASE}/transcript/${transcriptId}/`, { headers: headers() });
+  if (!metaRes.ok) throw new Error(`getTranscript ${metaRes.status}: ${await metaRes.text()}`);
+  const meta = await metaRes.json() as { data: { download_url: string } };
+  const contentRes = await fetch(meta.data.download_url);
+  if (!contentRes.ok) throw new Error(`transcript download ${contentRes.status}`);
+  return contentRes.json() as Promise<TranscriptSegment[]>;
+}
