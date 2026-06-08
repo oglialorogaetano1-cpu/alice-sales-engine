@@ -3,6 +3,7 @@ import express, { Request, Response } from 'express';
 import { createBot } from './recall';
 import { adminClient } from './supabase';
 import { handleWebhook } from './webhook';
+import { handleCalendarConnect, handleCalendarCallback } from './calendar';
 
 const app = express();
 
@@ -19,6 +20,10 @@ app.use(express.json());
 app.get('/health', (_req: Request, res: Response) => {
   res.json({ ok: true, service: 'alice-sales-engine' });
 });
+
+// ── Calendar OAuth ────────────────────────────────────────
+app.get('/calendar/connect/:closer_id', handleCalendarConnect);
+app.get('/calendar/callback', handleCalendarCallback);
 
 // ── POST /join ────────────────────────────────────────────
 // Body: { meeting_url: string, closer_id?: string }
